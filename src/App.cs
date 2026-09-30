@@ -20,7 +20,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 
 static class QuotaText {
- public static string ColorFor(double remaining){return remaining<=10?"#B85062":remaining<=30?"#AD762E":remaining<=60?"#5879A5":"#368B82";}
+ public static string ColorFor(double remaining){return remaining<=10?"#FF3B30":remaining<=30?"#D9A000":"#34C759";}
  public static string Message(double remaining) {
   if(remaining<=0)return "额度已用完，等重置吧";
   if(remaining<=10)return "快到上限，稍作休息";
