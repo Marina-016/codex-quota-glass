@@ -76,7 +76,7 @@ class QuotaWindow:Window {
  readonly CancellationTokenSource shutdown=new CancellationTokenSource();
  readonly List<Tuple<WindowQuota,TextBlock>> countdownLabels=new List<Tuple<WindowQuota,TextBlock>>();
  List<WindowQuota> quotas=new List<WindowQuota>();Border shell,cardSurface,shadowSurface;StackPanel body;TextBlock footerStatus,footerMessage;Grid root;
- IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton;RotateTransform refreshRotation=new RotateTransform(0);int motionVersion;
+ IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton,expandedToggle,compactToggle;StackPanel expandedView,compactView;double expandedCardHeight;RotateTransform refreshRotation=new RotateTransform(0);int motionVersion;
  public QuotaWindow(bool isPreview,bool compactPreview) {
   preview=isPreview;preferences=preview?new Preferences{Compact=compactPreview}:Preferences.Load();
   Title="Codex Quota Glass";Width=304;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=isPreview;ShowActivated=false;Topmost=true;
@@ -127,34 +127,20 @@ class QuotaWindow:Window {
  }
  void ToggleCompact(){
   if(settingsPopup!=null)settingsPopup.IsOpen=false;
-  int version;
-  double oldCardHeight=shell.ActualHeight,oldWindowHeight=ActualHeight;
-  shell.BeginAnimation(HeightProperty,null);BeginAnimation(HeightProperty,null);
-  root.UpdateLayout();var dpi=VisualTreeHelper.GetDpi(root);
-  var snapshot=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(root.ActualWidth*dpi.DpiScaleX)),Math.Max(1,(int)Math.Ceiling(root.ActualHeight*dpi.DpiScaleY)),dpi.PixelsPerInchX,dpi.PixelsPerInchY,PixelFormats.Pbgra32);snapshot.Render(root);snapshot.Freeze();
-  double oldContentHeight=root.ActualHeight;
-  preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();version=++motionVersion;
-  double targetCardHeight=shell.ActualHeight,targetWindowHeight=ActualHeight,newContentHeight=root.ActualHeight;
-  if(!SystemParameters.ClientAreaAnimation||oldCardHeight<=0)return;
-  // Animate the card in one fixed transparent HWND. No per-frame native resize.
-  SizeToContent=SizeToContent.Manual;Height=Math.Max(oldWindowHeight,targetWindowHeight);shell.VerticalAlignment=VerticalAlignment.Top;shell.Height=targetCardHeight;
-  root.Height=Math.Max(oldContentHeight,newContentHeight);root.VerticalAlignment=VerticalAlignment.Top;
-  var outgoing=new Image{Source=snapshot,Width=root.ActualWidth,Height=oldContentHeight,Stretch=Stretch.Fill,VerticalAlignment=VerticalAlignment.Top,IsHitTestVisible=false};root.Children.Add(outgoing);
-  var incoming=(UIElement)root.Children[0];incoming.Opacity=0;
-  var clip=new RectangleGeometry(new Rect(0,0,244,Math.Max(0,oldCardHeight-26)));root.Clip=clip;
-  int duration=preferences.Compact?220:260;
-  double maximum=Math.Max(oldCardHeight,targetCardHeight);
-  cardSurface.Height=maximum;shadowSurface.Height=maximum;
-  var surfaceScale=new ScaleTransform(1,oldCardHeight/maximum);var shadowScale=new ScaleTransform(1,oldCardHeight/maximum);cardSurface.RenderTransform=surfaceScale;shadowSurface.RenderTransform=shadowScale;
-  var easing=new CubicEase{EasingMode=EasingMode.EaseOut};
-  var morph=new DoubleAnimation(oldCardHeight/maximum,targetCardHeight/maximum,TimeSpan.FromMilliseconds(duration)){EasingFunction=easing};
-  // Keep the final cached transforms and clip: replacing them with freshly
-  // measured vectors here caused a second visible frame/rounding discontinuity.
-  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;Height=targetWindowHeight;SizeToContent=SizeToContent.Manual;};
-  outgoing.BeginAnimation(OpacityProperty,new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(100)));
-  incoming.BeginAnimation(OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(160)){BeginTime=TimeSpan.FromMilliseconds(30)});
-  clip.BeginAnimation(RectangleGeometry.RectProperty,new RectAnimation(new Rect(0,0,244,Math.Max(0,targetCardHeight-26)),TimeSpan.FromMilliseconds(duration)){EasingFunction=easing});
-  shadowScale.BeginAnimation(ScaleTransform.ScaleYProperty,morph.Clone());surfaceScale.BeginAnimation(ScaleTransform.ScaleYProperty,morph);
+  preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();
+  toggleButton=preferences.Compact?compactToggle:expandedToggle;
+  var incoming=preferences.Compact?compactView:expandedView;var outgoing=preferences.Compact?expandedView:compactView;
+  incoming.IsHitTestVisible=true;outgoing.IsHitTestVisible=false;
+  double target=preferences.Compact?67:expandedCardHeight;
+  int ms=SystemParameters.ClientAreaAnimation?240:0;
+  var ease=new CubicEase{EasingMode=EasingMode.EaseInOut};
+  // Both layouts are retained. No rebuild, snapshot, HWND resize or scale reset.
+  cardSurface.BeginAnimation(HeightProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(ms)){EasingFunction=ease});
+  shadowSurface.RenderTransform=Transform.Identity;
+  shadowSurface.BeginAnimation(HeightProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(ms)){EasingFunction=ease});
+  var clip=(RectangleGeometry)root.Clip;
+  clip.BeginAnimation(RectangleGeometry.RectProperty,new RectAnimation(new Rect(0,0,244,Math.Max(0,target-26)),TimeSpan.FromMilliseconds(ms)){EasingFunction=ease});
+  Animate(outgoing,OpacityProperty,0,100);Animate(incoming,OpacityProperty,1,180);
  }
  void StopRefreshSpin(){double angle=refreshRotation.Angle;refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=angle;double finish=(Math.Floor(angle/360)+1)*360;var settle=new DoubleAnimation(angle,finish,TimeSpan.FromMilliseconds(Math.Max(160,(finish-angle)/360*900))){EasingFunction=new QuadraticEase{EasingMode=EasingMode.EaseOut}};settle.Completed+=(s,e)=>{refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=0;};refreshRotation.BeginAnimation(RotateTransform.AngleProperty,settle);}
  void Menu(Button anchor) {
@@ -182,7 +168,7 @@ class QuotaWindow:Window {
   var host=new Grid();cardSurface=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(12),BorderBrush=new SolidColorBrush(Color.FromArgb(210,255,255,255)),BorderThickness=new Thickness(1),VerticalAlignment=VerticalAlignment.Top,CacheMode=new BitmapCache()};
   shadowSurface=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(16,18,16,6),Background=new SolidColorBrush(Color.FromArgb(24,28,43,58)),VerticalAlignment=VerticalAlignment.Top,Effect=new System.Windows.Media.Effects.BlurEffect{Radius=12},CacheMode=new BitmapCache(),IsHitTestVisible=false};
   cardSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shadowSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});UpdateGlass();host.Children.Add(shadowSurface);host.Children.Add(cardSurface);host.Children.Add(shell);Content=host;
-  if(preferences.Compact){BuildCompact();UpdateFooter();return;}
+
   var header=new Grid{Height=41,Margin=new Thickness(0,0,0,8)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
   header.Children.Add(Text("codex",14,"#26313B",FontWeights.SemiBold));
   var actions=new StackPanel{Orientation=Orientation.Horizontal};Grid.SetColumn(actions,1);header.Children.Add(actions);
@@ -203,7 +189,19 @@ class QuotaWindow:Window {
   var footer=new Grid();footer.ColumnDefinitions.Add(new ColumnDefinition());footer.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
   footerStatus=Text("",9,"#85919B");footerStatus.MaxWidth=150;footerMessage=Text("",9,"#778591");Grid.SetColumn(footerMessage,1);footer.Children.Add(footerStatus);footer.Children.Add(footerMessage);body.Children.Add(footer);UpdateFooter();
   if(quotas.Count>6){Height=Math.Min(area.Height-50,700);SizeToContent=SizeToContent.Manual;var scroll=new ScrollViewer{Content=shell,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};Content=scroll;}
-  else {SizeToContent=SizeToContent.Height;Height=Double.NaN;}
+  else {PrepareRetainedViews();}
+ }
+ void PrepareRetainedViews(){
+  expandedView=(StackPanel)root.Children[0];expandedToggle=toggleButton;
+  expandedView.Measure(new Size(244,Double.PositiveInfinity));expandedCardHeight=expandedView.DesiredSize.Height+26;
+  root.Height=expandedView.DesiredSize.Height;root.VerticalAlignment=VerticalAlignment.Top;
+  var status=footerStatus;var message=footerMessage;compactView=new StackPanel{VerticalAlignment=VerticalAlignment.Top};body=compactView;BuildCompact();compactToggle=toggleButton;footerStatus=status;footerMessage=message;root.Children.Add(compactView);
+  shell.Height=expandedCardHeight;cardSurface.ClearValue(HeightProperty);cardSurface.Height=preferences.Compact?67:expandedCardHeight;
+  shadowSurface.ClearValue(HeightProperty);shadowSurface.Height=preferences.Compact?67:expandedCardHeight;shadowSurface.RenderTransform=Transform.Identity;
+  root.Clip=new RectangleGeometry(new Rect(0,0,244,(preferences.Compact?67:expandedCardHeight)-26));
+  expandedView.Opacity=preferences.Compact?0:1;compactView.Opacity=preferences.Compact?1:0;expandedView.IsHitTestVisible=!preferences.Compact;compactView.IsHitTestVisible=preferences.Compact;
+  toggleButton=preferences.Compact?compactToggle:expandedToggle;
+  Height=expandedCardHeight+24;SizeToContent=SizeToContent.Manual;
  }
  void BuildCompact() {
   var row=new Grid{Height=41};row.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(48)});row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(28)});
@@ -239,9 +237,9 @@ class QuotaWindow:Window {
  public void ExportSettings(string path){var anchor=FindVisual<Button>(this);Menu(anchor);var panel=(FrameworkElement)settingsPopup.Child;panel.BeginAnimation(OpacityProperty,null);panel.Opacity=1;panel.RenderTransform=Transform.Identity;panel.UpdateLayout();var image=new RenderTargetBitmap((int)(panel.ActualWidth*3),(int)(panel.ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(panel);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);settingsPopup.IsOpen=false;}
  static T FindVisual<T>(DependencyObject parent) where T:DependencyObject {for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++){var child=VisualTreeHelper.GetChild(parent,i);if(child is T)return (T)child;var found=FindVisual<T>(child);if(found!=null)return found;}return null;}
  static void CheckHover(DependencyObject parent){var button=parent as Button;if(button!=null){button.ApplyTemplate();button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseEnterEvent});button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseLeaveEvent});}for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++)CheckHover(VisualTreeHelper.GetChild(parent,i));}
- void CheckTransparentCorners(){var bitmap=new RenderTargetBitmap((int)Math.Ceiling(ActualWidth),(int)Math.Ceiling(ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(this);int stride=bitmap.PixelWidth*4;var pixels=new byte[stride*bitmap.PixelHeight];bitmap.CopyPixels(pixels,stride,0);if(pixels[3]>20||pixels[stride-1]>20||pixels[(bitmap.PixelHeight-1)*stride+3]>20||pixels[pixels.Length-1]>20)throw new Exception("Opaque pixels outside rounded card");if(pixels[(bitmap.PixelHeight/2)*stride+(bitmap.PixelWidth/2)*4+3]<80)throw new Exception("Missing card surface");}
+ void CheckTransparentCorners(){var bitmap=new RenderTargetBitmap((int)Math.Ceiling(ActualWidth),(int)Math.Ceiling(ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(this);int stride=bitmap.PixelWidth*4;var pixels=new byte[stride*bitmap.PixelHeight];bitmap.CopyPixels(pixels,stride,0);if(pixels[3]>20||pixels[stride-1]>20||pixels[(bitmap.PixelHeight-1)*stride+3]>20||pixels[pixels.Length-1]>20)throw new Exception("Opaque pixels outside rounded card");if(pixels[Math.Min(40,bitmap.PixelHeight-1)*stride+(bitmap.PixelWidth/2)*4+3]<80)throw new Exception("Missing card surface");}
  static void PumpAnimation(int milliseconds=450){var frame=new DispatcherFrame();var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(milliseconds)};timer.Tick+=(s,e)=>{timer.Stop();frame.Continue=false;};timer.Start();Dispatcher.PushFrame(frame);}
- public void CheckUi(){UpdateLayout();CheckHover(this);CheckTransparentCorners();Point expandedButton=toggleButton.TranslatePoint(new Point(14,14),this);if(shell.ActualWidth!=280||shell.ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(shell.ActualWidth!=280||shell.ActualHeight>75)throw new Exception("Compact layout bounds");CheckTransparentCorners();Point compactButton=toggleButton.TranslatePoint(new Point(14,14),this);if(Math.Abs(expandedButton.X-compactButton.X)>.5||Math.Abs(expandedButton.Y-compactButton.Y)>.5)throw new Exception("Toggle anchor moved");ToggleCompact();PumpAnimation();if(preferences.Compact||Math.Abs(toggleButton.TranslatePoint(new Point(14,14),this).Y-expandedButton.Y)>.5)throw new Exception("Expand animation anchor");ToggleCompact();PumpAnimation();if(!preferences.Compact||Double.IsNaN(ActualHeight))throw new Exception("Collapse animation");ToggleCompact();double fixedHeight=ActualHeight;PumpAnimation(90);if(Math.Abs(ActualHeight-fixedHeight)>.5)throw new Exception("Native window resized during morph");ToggleCompact();PumpAnimation();if(!preferences.Compact)throw new Exception("Interrupted transition state");preferences.Compact=false;Build();UpdateLayout();refreshRotation.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(900)){RepeatBehavior=RepeatBehavior.Forever});PumpAnimation(120);if(refreshRotation.Angle<=0)throw new Exception("Refresh rotation did not advance");StopRefreshSpin();PumpAnimation(1100);if(Math.Abs(refreshRotation.Angle)>.1)throw new Exception("Refresh rotation did not settle");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
+ public void CheckUi(){UpdateLayout();CheckHover(this);CheckTransparentCorners();Point expandedButton=toggleButton.TranslatePoint(new Point(14,14),this);if(shell.ActualWidth!=280||shell.ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(shell.ActualWidth!=280||cardSurface.Height>75)throw new Exception("Compact layout bounds");CheckTransparentCorners();Point compactButton=toggleButton.TranslatePoint(new Point(14,14),this);if(Math.Abs(expandedButton.X-compactButton.X)>.5||Math.Abs(expandedButton.Y-compactButton.Y)>.5)throw new Exception("Toggle anchor moved");ToggleCompact();PumpAnimation();if(preferences.Compact||Math.Abs(toggleButton.TranslatePoint(new Point(14,14),this).Y-expandedButton.Y)>.5)throw new Exception("Expand animation anchor");ToggleCompact();PumpAnimation();if(!preferences.Compact||Double.IsNaN(ActualHeight))throw new Exception("Collapse animation");ToggleCompact();double fixedHeight=ActualHeight;PumpAnimation(90);if(Math.Abs(ActualHeight-fixedHeight)>.5)throw new Exception("Native window resized during morph");ToggleCompact();PumpAnimation();if(!preferences.Compact)throw new Exception("Interrupted transition state");for(int repeat=0;repeat<6;repeat++){ToggleCompact();PumpAnimation(300);CheckTransparentCorners();double expected=preferences.Compact?67:expandedCardHeight;if(Math.Abs(cardSurface.ActualHeight-expected)>1)throw new Exception("Card background collapsed");}preferences.Compact=false;Build();UpdateLayout();refreshRotation.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(900)){RepeatBehavior=RepeatBehavior.Forever});PumpAnimation(120);if(refreshRotation.Angle<=0)throw new Exception("Refresh rotation did not advance");StopRefreshSpin();PumpAnimation(1100);if(Math.Abs(refreshRotation.Angle)>.1)throw new Exception("Refresh rotation did not settle");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
 }
 
 class Program {
