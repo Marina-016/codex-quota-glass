@@ -148,7 +148,9 @@ class QuotaWindow:Window {
   var surfaceScale=new ScaleTransform(1,oldCardHeight/maximum);var shadowScale=new ScaleTransform(1,oldCardHeight/maximum);cardSurface.RenderTransform=surfaceScale;shadowSurface.RenderTransform=shadowScale;
   var easing=new CubicEase{EasingMode=EasingMode.EaseOut};
   var morph=new DoubleAnimation(oldCardHeight/maximum,targetCardHeight/maximum,TimeSpan.FromMilliseconds(duration)){EasingFunction=easing};
-  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;root.Height=Double.NaN;root.Clip=null;cardSurface.RenderTransform=Transform.Identity;shadowSurface.RenderTransform=Transform.Identity;cardSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shadowSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shell.Height=Double.NaN;Height=Double.NaN;SizeToContent=SizeToContent.Height;};
+  // Keep the final cached transforms and clip: replacing them with freshly
+  // measured vectors here caused a second visible frame/rounding discontinuity.
+  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;Height=targetWindowHeight;SizeToContent=SizeToContent.Manual;};
   outgoing.BeginAnimation(OpacityProperty,new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(100)));
   incoming.BeginAnimation(OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(160)){BeginTime=TimeSpan.FromMilliseconds(30)});
   clip.BeginAnimation(RectangleGeometry.RectProperty,new RectAnimation(new Rect(0,0,244,Math.Max(0,targetCardHeight-26)),TimeSpan.FromMilliseconds(duration)){EasingFunction=easing});
