@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -40,6 +40,8 @@ static class QuotaText {
 
 static class Native {
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h,int id,uint modifiers,uint key);
+ [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h,int id);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindow callback,IntPtr p);
@@ -76,6 +78,7 @@ class QuotaWindow:Window {
  readonly CancellationTokenSource shutdown=new CancellationTokenSource();
  readonly List<Tuple<WindowQuota,TextBlock>> countdownLabels=new List<Tuple<WindowQuota,TextBlock>>();
  List<WindowQuota> quotas=new List<WindowQuota>();Border shell,cardSurface,shadowSurface;StackPanel body;TextBlock footerStatus,footerMessage;Grid root;
+ DateTime wakeUntil;bool hotkeyRegistered;public EventWaitHandle WakeSignal;
  IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton,expandedToggle,compactToggle;StackPanel expandedView,compactView;double expandedCardHeight;RotateTransform refreshRotation=new RotateTransform(0);int motionVersion;
  public QuotaWindow(bool isPreview,bool compactPreview) {
   preview=isPreview;preferences=preview?new Preferences{Compact=compactPreview}:Preferences.Load();
@@ -85,15 +88,17 @@ class QuotaWindow:Window {
   FontFamily=new FontFamily("Segoe UI, Microsoft YaHei UI");
 
   var area=SystemParameters.WorkArea;Left=preferences.X>=area.Left&&preferences.X<area.Right-100?preferences.X:area.Right-Width-24;Top=preferences.Y>=area.Top&&preferences.Y<area.Bottom-70?preferences.Y:area.Top+70;
-  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;glassAvailable=true;Build();};
+  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;glassAvailable=true;Build();if(!preview){hotkeyRegistered=Native.RegisterHotKey(hwnd,1,0x4003,0x51);HwndSource.FromHwnd(hwnd).AddHook((IntPtr h,int msg,IntPtr w,IntPtr l,ref bool handled)=>{if(msg==0x0312&&w.ToInt32()==1){Wake();handled=true;}return IntPtr.Zero;});}};
   MouseLeftButtonDown+=(s,e)=>{if(e.Handled)return;if(e.ClickCount==2){ToggleCompact();return;}try{DragMove();preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}catch{} };
   LocationChanged+=(s,e)=>{if(!preview&&!closed){preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}};
-  Closed+=(s,e)=>{closed=true;if(settingsPopup!=null)settingsPopup.IsOpen=false;shutdown.Cancel();foreground.Stop();refresh.Stop();countdown.Stop();if(tray!=null)tray.Dispose();shutdown.Dispose();Application.Current.Shutdown();};
-  foreground.Tick+=(s,e)=>UpdateVisibility();refresh.Tick+=(s,e)=>Refresh();countdown.Tick+=(s,e)=>UpdateCountdown();
+  Closed+=(s,e)=>{closed=true;if(hotkeyRegistered)Native.UnregisterHotKey(hwnd,1);if(settingsPopup!=null)settingsPopup.IsOpen=false;shutdown.Cancel();foreground.Stop();refresh.Stop();countdown.Stop();if(tray!=null)tray.Dispose();shutdown.Dispose();Application.Current.Shutdown();};
+  foreground.Tick+=(s,e)=>{if(WakeSignal!=null&&WakeSignal.WaitOne(0))Wake();UpdateVisibility();};refresh.Tick+=(s,e)=>Refresh();countdown.Tick+=(s,e)=>UpdateCountdown();
   if(preview){lastUpdate=DateTime.Now;quotas=new List<WindowQuota>{new WindowQuota{Name="5 小时",Left=82,Reset=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+7140},new WindowQuota{Name="每周",Left=64,Reset=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+176400}};}
   else {
    tray=new System.Windows.Forms.NotifyIcon{Icon=System.Drawing.SystemIcons.Information,Text="Codex 额度悬浮窗",Visible=true};
    var menu=new System.Windows.Forms.ContextMenuStrip();
+   tray.DoubleClick+=(s,e)=>Dispatcher.Invoke(new Action(Wake));
+   menu.Items.Add("显示悬浮窗   Ctrl+Alt+Q",null,(s,e)=>Dispatcher.Invoke(new Action(Wake)));
    menu.Items.Add("立即刷新",null,(s,e)=>Dispatcher.Invoke(new Action(Refresh)));
    var only=new System.Windows.Forms.ToolStripMenuItem("仅 Codex 前台显示"){Checked=preferences.ForegroundOnly,CheckOnClick=true};only.CheckedChanged+=(s,e)=>Dispatcher.Invoke(new Action(()=>{preferences.ForegroundOnly=only.Checked;if(!preview)preferences.Save();UpdateVisibility();}));menu.Items.Add(only);
    menu.Items.Add("收起 / 展开",null,(s,e)=>Dispatcher.Invoke(new Action(ToggleCompact)));
@@ -229,9 +234,10 @@ class QuotaWindow:Window {
   if(closed||preview)return;IntPtr current=Native.GetForegroundWindow();bool codex=Native.IsCodex(current);
   bool own=current!=IntPtr.Zero&&Native.Pid(current)==(uint)Process.GetCurrentProcess().Id;
   if(codex&&lastCodex!=current){lastCodex=current;if(hwnd!=IntPtr.Zero){}}
-  bool show=!preferences.ForegroundOnly||codex||(own&&IsVisible&&lastCodex!=IntPtr.Zero);
+  bool show=DateTime.UtcNow<wakeUntil||!preferences.ForegroundOnly||codex||(own&&IsVisible&&lastCodex!=IntPtr.Zero);
   if(show&&!IsVisible)Show();else if(!show&&IsVisible){if(settingsPopup!=null)settingsPopup.IsOpen=false;Hide();}
  }
+ public void Wake(){if(closed)return;wakeUntil=DateTime.UtcNow.AddSeconds(15);Show();Activate();if(tray!=null)tray.Text=hotkeyRegistered?"Codex 额度 · Ctrl+Alt+Q 唤醒":"Codex 额度 · 双击托盘唤醒（快捷键被占用）";}
  public void Start(){if(preview){Show();return;}new WindowInteropHelper(this).EnsureHandle();UpdateVisibility();}
  public void ExportPreview(string path){UpdateLayout();var image=new RenderTargetBitmap((int)(ActualWidth*3),(int)(ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(this);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);}
  public void ExportSettings(string path){var anchor=FindVisual<Button>(this);Menu(anchor);var panel=(FrameworkElement)settingsPopup.Child;panel.BeginAnimation(OpacityProperty,null);panel.Opacity=1;panel.RenderTransform=Transform.Identity;panel.UpdateLayout();var image=new RenderTargetBitmap((int)(panel.ActualWidth*3),(int)(panel.ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(panel);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);settingsPopup.IsOpen=false;}
@@ -249,8 +255,8 @@ class Program {
   try{Native.SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{}
   bool preview=args.Contains("--preview")||args.Contains("--ui-check")||args.Contains("--visual-check");
   using(var mutex=new Mutex(false,preview?"Local\\CodexQuotaGlassPreview":"Local\\CodexQuotaGlass")){
-   if(!mutex.WaitOne(0))return 0;
-   try{var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};var window=new QuotaWindow(preview,args.Contains("--compact"));window.Start();if(preview&&!args.Contains("--visual-check")){window.Dispatcher.Invoke(()=>{},DispatcherPriority.Render);if(args.Contains("--ui-check"))window.CheckUi();else if(args.Contains("--settings"))window.ExportSettings(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"preview-settings.png"));else window.ExportPreview(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,args.Contains("--compact")?"preview-compact.png":"preview.png"));window.Close();}else app.Run();}finally{mutex.ReleaseMutex();}
+   if(!mutex.WaitOne(0)){if(!preview&&!args.Contains("--background")){try{using(var signal=EventWaitHandle.OpenExisting("Local\\CodexQuotaGlass.Wake"))signal.Set();}catch(WaitHandleCannotBeOpenedException){}}return 0;}
+   try{using(var wake=new EventWaitHandle(false,EventResetMode.AutoReset,preview?"Local\\CodexQuotaGlassPreview.Wake":"Local\\CodexQuotaGlass.Wake")){var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};var window=new QuotaWindow(preview,args.Contains("--compact"));window.WakeSignal=preview?null:wake;window.Start();if(!preview&&!args.Contains("--background"))window.Wake();if(preview&&!args.Contains("--visual-check")){window.Dispatcher.Invoke(()=>{},DispatcherPriority.Render);if(args.Contains("--ui-check"))window.CheckUi();else if(args.Contains("--settings"))window.ExportSettings(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"preview-settings.png"));else window.ExportPreview(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,args.Contains("--compact")?"preview-compact.png":"preview.png"));window.Close();}else app.Run();}}finally{mutex.ReleaseMutex();}
   }return 0;
  }
 }

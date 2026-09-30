@@ -7,10 +7,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and test
         shell: powershell
-        run: .\build.ps1 -Test
+        run: .\build.ps1 -Test -Package
       - uses: actions/upload-artifact@v4
         with:
           name: CodexQuotaGlass-windows
-          path: |
-            outputs/CodexQuotaGlass/CodexQuotaGlass.exe
-            outputs/CodexQuotaGlass/CodexQuotaGlass.exe.config
+          path: outputs/CodexQuotaGlass-portable.zip

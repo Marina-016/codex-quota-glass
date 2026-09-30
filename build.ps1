@@ -1,4 +1,4 @@
-param([switch]$Test)
+﻿param([switch]$Test, [switch]$Package)
 $ErrorActionPreference = 'Stop'
 $frameworkPath = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $compiler = Join-Path $frameworkPath 'csc.exe'
@@ -18,3 +18,16 @@ if ($Test) {
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 }
 Write-Output "Built: $outputPath\CodexQuotaGlass.exe"
+
+$packageFiles = @('README.md','LICENSE','Start.cmd','Startup.ps1','Enable-Startup.cmd','Disable-Startup.cmd','CONTRIBUTING.md')
+foreach ($file in $packageFiles) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $outputPath -Force
+}
+$assetPath = Join-Path $outputPath 'docs\assets'
+New-Item -ItemType Directory -Path $assetPath -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\assets\preview.png') -Destination $assetPath -Force
+if ($Package) {
+    $archiveFiles = @('CodexQuotaGlass.exe','CodexQuotaGlass.exe.config','docs') + $packageFiles
+    $archivePaths = $archiveFiles | ForEach-Object { Join-Path $outputPath $_ }
+    Compress-Archive -LiteralPath $archivePaths -DestinationPath (Join-Path $PSScriptRoot 'outputs\CodexQuotaGlass-portable.zip') -Force
+}

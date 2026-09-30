@@ -1,70 +1,114 @@
 # Codex Quota Glass
 
-Windows 常驻 Codex 额度悬浮窗。默认仅在 Codex 桌面应用位于前台时显示；切到其他应用自动隐藏，回到 Codex 恢复。
+**额度，一眼可见。**
+
+轻巧的 Windows Codex 额度悬浮窗。白色半透明卡片与渐变进度条，随 Codex 前台状态自动显示与隐藏。
+
+Windows 10/11 · .NET Framework 4.8 · 便携运行 · MIT
+
+<img src="docs/assets/preview.png" alt="展开模式，演示数据" width="380">
 
 ## 功能
 
-- 白色玻璃背景、彩色渐变额度条、WPF 文字与矢量图标。
-- 显示接口实际返回的额度周期、剩余百分比和重置倒计时，每 60 秒刷新。
-- 展开版宽 280 DIP、圆角 28；精简版宽 280 DIP、胶囊圆角 34，重新平衡品牌、额度与按钮间距。
-- 右下角根据所有额度周期中的最低剩余百分比显示提示。
-- 展开 / 精简、拖动位置保存、托盘退出和手动刷新。
-- 查询失败明确保留旧数据，到达重置时间后等待新的账户数据，不自行恢复为 100%。
+- 额度周期、剩余百分比、重置倒计时，每 60 秒刷新。
+- 展开与精简模式、固定品牌字号与按钮位置、拖动位置保存。
+- 明亮白色半透明底色，可调透明度，圆角与柔和阴影。
+- 百分比：大于 30% 绿色、10–30% 黄色、不超过 10% 红色。
+- 托盘常驻、快捷键唤醒、重复启动唤醒，可选开机启动。
 
-## 运行与构建
+截图为演示数据。当前玻璃材质不包含背景模糊。
 
-要求 Windows 10/11、.NET Framework 4.8，Codex 桌面应用或 CLI 已安装并通过 ChatGPT 登录。使用 WPF 逐像素透明窗口，固定白色半透明底色与柔和圆角阴影；当前不启用原生 Acrylic 背景模糊，避免系统合成层在自定义圆角外露出灰色底板。
+## 快速开始
+
+需要 Windows 10/11、.NET Framework 4.8，以及已安装并通过 ChatGPT 登录的 Codex CLI。仅安装桌面应用而没有可找到的 CLI 时，需配置 CLI。
+
+1. 解压 CodexQuotaGlass-portable.zip 到固定、可写的文件夹。首次发布前可从源码构建。
+2. 双击 Start.cmd 或 CodexQuotaGlass.exe。
+3. 回到 Codex 查看额度，托盘图标表示程序仍在运行。
+
+无需管理员权限。请先解压整个 ZIP，保留 EXE 同目录的 .config 文件。偏好保存在同目录 settings.json。
+
+### 从源码构建
+
+使用 Windows .NET Framework 自带编译器，无需 npm 或第三方 NuGet 包。
 
 ```powershell
-.\build.ps1 -Test
+.\build.ps1 -Test -Package
+.\outputs\CodexQuotaGlass\Start.cmd
+```
+
+便携包输出到 outputs/CodexQuotaGlass-portable.zip。GitHub Actions 构建、测试并上传相同 ZIP。
+
+## 启动与唤醒
+
+| 入口 | 行为 |
+|---|---|
+| 双击 Start.cmd / EXE | 启动；已运行时唤醒已有窗口 |
+| Ctrl + Alt + Q | 程序运行时唤醒 |
+| 双击托盘图标 | 唤醒 |
+| 右键托盘 → 显示悬浮窗 | 唤醒 |
+| 回到 Codex 前台 | 自动显示 |
+| CodexQuotaGlass.exe --background | 后台启动，不临时显示 |
+
+开启“仅 Codex 前台显示”时，**手动唤醒会临时显示 15 秒**，然后恢复前台跟随。需要始终显示，可关闭该选项。快捷键仅在程序运行时有效；若被占用，使用托盘或重复启动。
+
+### 可选：登录 Windows 后启动
+
+在便携包目录双击 Enable-Startup.cmd，只在当前用户启动文件夹创建快捷方式，下次登录后后台运行，无需管理员权限。
+
+双击 Disable-Startup.cmd 移除快捷方式。默认不会开启。移动目录后需在新位置重新启用；删除程序前先禁用。脚本执行策略选项仅作用于本次 PowerShell 进程，不修改系统策略。
+
+## 操作
+
+| 操作 | 方式 |
+|---|---|
+| 移动 | 拖动卡片空白处 |
+| 展开 / 收起 | 右侧箭头，或双击空白处 |
+| 刷新 | 刷新图标或托盘菜单 |
+| 透明度 | 设置图标，5–65%，默认 14% |
+| 前台跟随 | 设置或托盘中的“仅 Codex 前台显示” |
+| 退出 | 托盘菜单 → 退出 |
+
+额度为账户共享，不是当前聊天独有。失败时保留旧数据并提示失败；重置后等待接口更新，不自行恢复成 100%。
+
+## 常见问题
+
+**没有窗口？** 查看托盘及折叠图标区。前台跟随可能隐藏窗口；回到 Codex、双击托盘或按 Ctrl + Alt + Q。快捷键不能启动已退出的程序。
+
+**未找到 Codex / 查询失败？** 确认 CLI 已安装并通过 ChatGPT 登录，检查网络。查找顺序：CODEX_QUOTA_CLI、PATH 中 codex.exe、%LOCALAPPDATA%\OpenAI\Codex\bin。指定路径后重新启动：
+
+```powershell
+$env:CODEX_QUOTA_CLI = 'C:\path\to\codex.exe'
 .\outputs\CodexQuotaGlass\CodexQuotaGlass.exe
 ```
 
-不需要 npm、第三方 NuGet 包或管理员权限。使用 Windows .NET Framework 自带编译器。首次运行会显示托盘图标；若 Codex 不在前台，悬浮窗不会显示。
+**更新？** 托盘退出后替换文件，保留 settings.json，再启动。
 
-### 操作
+**恢复默认？** 退出，删除同目录 settings.json，再启动。
 
-- 左键拖动移动；双击背景收起 / 展开。
-- 顶部图标从左到右：刷新、设置、收起；精简版最右侧为展开。展开/收起按钮坐标固定。
-- 滑杆图标打开圆角设置面板；固定明亮白色底色，仅调节背景透明度（5–65%，默认 14%），不影响文字和进度条。点击关闭按钮或面板外关闭。退出在托盘菜单中。
-- 托盘右键可刷新、切换仅前台显示、收起 / 展开或退出。
-- 设置保存在 EXE 同目录的 `settings.json`，该目录应可写。
-
-### 提示区间
-
-| 最低剩余额度 | 提示 |
-|---|---|
-| > 60% | 余量充足，放心推进 |
-| > 30% 且 ≤ 60% | 节奏不错，稳步推进 |
-| > 10% 且 ≤ 30% | 留点余量，先做重点 |
-| > 0% 且 ≤ 10% | 快到上限，稍作休息 |
-| 0% | 额度已用完，等重置吧 |
-
-异常和过期数据优先显示状态提示。额度为账户共享，不是当前聊天专属。
+**快捷键无效？** 确认程序运行。被占用时，唤醒后的托盘提示会说明；双击托盘仍可用。
 
 ## 数据与隐私
 
-程序通过本地 `codex app-server --stdio` 的 `account/rateLimits/read` 接口查询。它不读取、导出或保存登录凭据，不运行模型任务、不发送消息、不消耗重置 credits。登录维护与网络请求由 Codex 自己处理。无遥测、无第三方后台。仅调用 Windows 前台窗口 API 和进程名识别，未监控其他窗口内容。
+通过本地 codex app-server --stdio 的 account/rateLimits/read 查询。程序不读取或保存登录凭据、不发起模型任务，无遥测。登录与网络查询由 Codex CLI 处理。前台跟随只检查进程与安装路径，不读取窗口内容。
 
-窗口识别支持 `Codex.exe`，以及 OpenAI.Codex 安装包内实际名为 `ChatGPT.exe` 的客户端；后者会核对可执行文件路径，避免普通 ChatGPT 客户端也触发显示。窗口切换检查间隔 150ms。操作悬浮窗自身时保留显示，避免点击菜单时自动消失。
+依赖 Codex 接口与进程识别，未来版本可能影响兼容性。混合 DPI、多显示器及其他安装方式欢迎反馈。当前构建产物未签名。
 
-可设置 `CODEX_QUOTA_CLI` 为 Codex CLI 完整路径，已有 `CODEX_HOME` 会保留。请勿在 issues 上传 `auth.json`、令牌或完整账户日志。
+## 开发与贡献
 
-## 开发
+```powershell
+.\build.ps1 -Test
+.\outputs\CodexQuotaGlass\CodexQuotaGlass.exe --ui-check
+```
 
-- `src/App.cs`：WPF 界面、Windows 材质与前台窗口逻辑。
-- `src/QuotaClient.cs`：Codex 只读额度接口。
-- `tests/QuotaTests.cs`：额度数据、提示阈值和倒计时测试。
-- `--check`：查询真实额度；`--diagnose`：输出 Codex 窗口识别结果。
-- `--preview` / `--preview --compact` / `--preview --settings`：输出 3× 分辨率演示图。
-- `--ui-check`：实际实例化按钮与滑杆模板，检查展开/精简尺寸和透明度绑定。
-- 动效：按钮悬停 120ms、按下缩至 96% / 80ms、松开 180ms；面板打开 180ms 淡入与 6 DIP 位移，关闭按钮淡出 140ms；收起/展开 240ms：保留两套布局，固定透明窗口尺寸；只改变背景高度、裁切和内容透明度，不重建控件、不使用背景缩放快照。关闭系统动画时跳过动效。
+- src/App.cs：界面、托盘、前台识别、动效与唤醒。
+- src/QuotaClient.cs：只读查询与解析。
+- tests/QuotaTests.cs：数据、颜色、提示和倒计时检查。
+- --preview / --preview --compact / --preview --settings：生成 3× 分辨率演示 PNG。
+- --ui-check：检查布局、透明边缘、模板和切换状态，不能代替动效体验检查。
 
-这是独立社区工具，与 OpenAI 无隶属关系。当前未签名；各 Windows 版本、混合 DPI、多显示器和辅助功能需进一步验证。圆角及阴影由 WPF 在透明窗口内绘制，外侧保留透明像素。
+欢迎 [参与贡献](CONTRIBUTING.md)。问题请附 Windows 版本、缩放比例与复现步骤，不要上传 auth.json、令牌或账户日志。
 
-MIT License。仓库不包含构建产物、个人设置或账户信息。
+## 许可证
 
-额度数字颜色：≤10% 红色 #FF3B30，>10% 且 ≤30% 黄色 #D9A000，>30% 绿色 #34C759。颜色辅助判断，数字与状态文字同时保留。
-用户双击 EXE 启动，回到 Codex 前台自动出现。当前不默认设置开机启动。
-
-刷新图标采用以 20×20 视口中心旋转的双向箭头，900ms 匀速一圈；查询结束后完成本圈并减速归位，刷新重建界面时保留同一个旋转对象。参考 Tailwind animate-spin 的 linear infinite 节奏。
+[MIT](LICENSE)。独立社区项目，与 OpenAI 无隶属关系。
