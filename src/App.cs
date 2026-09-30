@@ -41,11 +41,18 @@ static class Native {
  [DllImport("gdi32.dll")] static extern IntPtr CreateRoundRectRgn(int left,int top,int right,int bottom,int width,int height);
  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr region);
  [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr hwnd,IntPtr region,bool redraw);
+ [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out WindowRect rect);
+ [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr hwnd,IntPtr region);
+ [DllImport("gdi32.dll")] static extern bool PtInRegion(IntPtr region,int x,int y);
+ [StructLayout(LayoutKind.Sequential)] struct WindowRect {public int Left,Top,Right,Bottom;}
  public static void RoundWindow(IntPtr hwnd,double width,double height,double radius,double scale) {
   if(hwnd==IntPtr.Zero||width<=0||height<=0)return;
-  var region=CreateRoundRectRgn(0,0,(int)Math.Ceiling(width*scale)+1,(int)Math.Ceiling(height*scale)+1,(int)(radius*2*scale),(int)(radius*2*scale));
+  WindowRect rect;if(!GetWindowRect(hwnd,out rect))return;
+  var region=CreateRoundRectRgn(0,0,rect.Right-rect.Left,rect.Bottom-rect.Top,(int)Math.Round(radius*2*scale),(int)Math.Round(radius*2*scale));
   if(region!=IntPtr.Zero&&SetWindowRgn(hwnd,region,true)==0)DeleteObject(region);
  }
+ public static bool HasClippedCorners(IntPtr hwnd){var region=CreateRoundRectRgn(0,0,1,1,0,0);try{WindowRect rect;return GetWindowRect(hwnd,out rect)&&GetWindowRgn(hwnd,region)>0&&!PtInRegion(region,0,0)&&!PtInRegion(region,rect.Right-rect.Left-1,0)&&PtInRegion(region,(rect.Right-rect.Left)/2,(rect.Bottom-rect.Top)/2);}finally{DeleteObject(region);}}
+ public static void RemoveSystemBorder(IntPtr hwnd){try{int none=-2;DwmSetWindowAttribute(hwnd,34,ref none,4);int square=1;DwmSetWindowAttribute(hwnd,33,ref square,4);}catch{}}
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
@@ -112,9 +119,10 @@ class QuotaWindow:Window {
   AllowsTransparency=false;Background=Brushes.Transparent;UseLayoutRounding=true;SnapsToDevicePixels=true;
   TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);TextOptions.SetTextRenderingMode(this,TextRenderingMode.ClearType);
   FontFamily=new FontFamily("Segoe UI, Microsoft YaHei UI");
-  SizeChanged+=(s,e)=>ApplyRoundedRegion();
+  SizeChanged+=(s,e)=>QueueRoundedRegion();
   var area=SystemParameters.WorkArea;Left=preferences.X>=area.Left&&preferences.X<area.Right-100?preferences.X:area.Right-Width-24;Top=preferences.Y>=area.Top&&preferences.Y<area.Bottom-70?preferences.Y:area.Top+70;
-  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;var source=HwndSource.FromHwnd(hwnd);source.CompositionTarget.BackgroundColor=Colors.Transparent;glassAvailable=Native.Glass(hwnd);Native.MatchCorners(hwnd,IntPtr.Zero);Build();};
+  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;var source=HwndSource.FromHwnd(hwnd);source.CompositionTarget.BackgroundColor=Colors.Transparent;glassAvailable=Native.Glass(hwnd);Native.RemoveSystemBorder(hwnd);source.AddHook((IntPtr h,int message,IntPtr w,IntPtr l,ref bool handled)=>{if(message==0x0047||message==0x02E0)QueueRoundedRegion();return IntPtr.Zero;});Build();QueueRoundedRegion();};
+  ContentRendered+=(s,e)=>QueueRoundedRegion();
   MouseLeftButtonDown+=(s,e)=>{if(e.Handled)return;if(e.ClickCount==2){ToggleCompact();return;}try{DragMove();preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}catch{} };
   LocationChanged+=(s,e)=>{if(!preview&&!closed){preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}};
   Closed+=(s,e)=>{closed=true;if(settingsPopup!=null)settingsPopup.IsOpen=false;shutdown.Cancel();foreground.Stop();refresh.Stop();countdown.Stop();if(tray!=null)tray.Dispose();shutdown.Dispose();Application.Current.Shutdown();};
@@ -148,7 +156,9 @@ class QuotaWindow:Window {
   Action<byte> tint=a=>{button.ApplyTemplate();var border=button.Template.FindName("Surface",button) as Border;if(border!=null){var brush=border.Background as SolidColorBrush;if(brush!=null)brush.BeginAnimation(SolidColorBrush.ColorProperty,new ColorAnimation(Color.FromArgb(a,255,255,255),TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?120:0)));}};
   button.MouseEnter+=(s,e)=>tint(170);button.MouseLeave+=(s,e)=>{tint(0);zoom(1,180);};button.PreviewMouseLeftButtonDown+=(s,e)=>{tint(230);zoom(.96,80);};button.PreviewMouseLeftButtonUp+=(s,e)=>zoom(1,180);
  }
- void ApplyRoundedRegion(){if(preview)return;var source=PresentationSource.FromVisual(this);double scale=source==null?1:source.CompositionTarget.TransformToDevice.M11;Native.RoundWindow(hwnd,ActualWidth,ActualHeight,cornerRadius,scale);}
+ bool roundPending;double clippedWidth,clippedHeight,clippedScale,clippedRadius;
+ void QueueRoundedRegion(){if(roundPending||closed)return;roundPending=true;Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle,new Action(()=>{roundPending=false;if(!closed)ApplyRoundedRegion();}));}
+ void ApplyRoundedRegion(){var source=PresentationSource.FromVisual(this);double scale=source==null?1:source.CompositionTarget.TransformToDevice.M11;if(clippedWidth==ActualWidth&&clippedHeight==ActualHeight&&clippedScale==scale&&clippedRadius==cornerRadius&&Native.HasClippedCorners(hwnd))return;Native.RoundWindow(hwnd,ActualWidth,ActualHeight,cornerRadius,scale);clippedWidth=ActualWidth;clippedHeight=ActualHeight;clippedScale=scale;clippedRadius=cornerRadius;}
  void ToggleCompact(){BeginAnimation(HeightProperty,null);if(settingsPopup!=null)settingsPopup.IsOpen=false;double oldHeight=ActualHeight;preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();double target=ActualHeight;if(!SystemParameters.ClientAreaAnimation||oldHeight<=0)return;SizeToContent=SizeToContent.Manual;Height=target;var a=new DoubleAnimation(oldHeight,target,TimeSpan.FromMilliseconds(220)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}};a.Completed+=(s,e)=>{BeginAnimation(HeightProperty,null);Height=Double.NaN;SizeToContent=SizeToContent.Height;ApplyRoundedRegion();};BeginAnimation(HeightProperty,a);}
  void Menu(Button anchor) {
   if(settingsPopup!=null&&settingsPopup.IsOpen){CloseSettings();return;}
@@ -225,7 +235,7 @@ class QuotaWindow:Window {
  public void ExportPreview(string path){UpdateLayout();var image=new RenderTargetBitmap((int)(ActualWidth*3),(int)(ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(this);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);}
  public void ExportSettings(string path){var anchor=FindVisual<Button>(this);Menu(anchor);var panel=(FrameworkElement)settingsPopup.Child;panel.BeginAnimation(OpacityProperty,null);panel.Opacity=1;panel.RenderTransform=Transform.Identity;panel.UpdateLayout();var image=new RenderTargetBitmap((int)(panel.ActualWidth*3),(int)(panel.ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(panel);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);settingsPopup.IsOpen=false;}
  static T FindVisual<T>(DependencyObject parent) where T:DependencyObject {for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++){var child=VisualTreeHelper.GetChild(parent,i);if(child is T)return (T)child;var found=FindVisual<T>(child);if(found!=null)return found;}return null;}
- public void CheckUi(){UpdateLayout();if(ActualWidth!=280||ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(ActualWidth!=268||ActualHeight>75)throw new Exception("Compact layout bounds");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
+ public void CheckUi(){UpdateLayout();ApplyRoundedRegion();if(!Native.HasClippedCorners(hwnd))throw new Exception("Expanded native corner clipping");if(ActualWidth!=280||ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(ActualWidth!=268||ActualHeight>75)throw new Exception("Compact layout bounds");ApplyRoundedRegion();if(!Native.HasClippedCorners(hwnd))throw new Exception("Compact native corner clipping");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
 }
 
 class Program {
