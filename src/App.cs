@@ -76,7 +76,7 @@ class QuotaWindow:Window {
  readonly CancellationTokenSource shutdown=new CancellationTokenSource();
  readonly List<Tuple<WindowQuota,TextBlock>> countdownLabels=new List<Tuple<WindowQuota,TextBlock>>();
  List<WindowQuota> quotas=new List<WindowQuota>();Border shell;StackPanel body;TextBlock footerStatus,footerMessage;Grid root;
- IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton;RotateTransform refreshRotation;
+ IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton;RotateTransform refreshRotation=new RotateTransform(0);int motionVersion;
  public QuotaWindow(bool isPreview,bool compactPreview) {
   preview=isPreview;preferences=preview?new Preferences{Compact=compactPreview}:Preferences.Load();
   Title="Codex Quota Glass";Width=304;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=isPreview;ShowActivated=false;Topmost=true;
@@ -112,7 +112,7 @@ class QuotaWindow:Window {
   var edge=new FrameworkElementFactory(typeof(Border));edge.SetValue(Border.CornerRadiusProperty,new CornerRadius(8));edge.SetValue(Border.BackgroundProperty,Ink("#F8FAFC"));edge.SetValue(Border.PaddingProperty,new Thickness(9,5,9,5));edge.AppendChild(new FrameworkElementFactory(typeof(ContentPresenter)));tip.Template=new ControlTemplate(typeof(ToolTip)){VisualTree=edge};
   var button=new Button{Content=viewport,ToolTip=tip,Width=28,Height=28,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Cursor=Cursors.Hand,Focusable=true};
   System.Windows.Automation.AutomationProperties.SetName(button,tooltip);ToolTipService.SetInitialShowDelay(button,650);
-  if(tooltip=="刷新额度"){refreshRotation=new RotateTransform(0);viewport.RenderTransformOrigin=new Point(.5,.5);viewport.RenderTransform=refreshRotation;}
+  if(tooltip=="刷新额度"){viewport.RenderTransformOrigin=new Point(.5,.5);viewport.RenderTransform=refreshRotation;}
   RoundedButton(button);
   button.Click+=(s,e)=>{click();e.Handled=true;};return button;
  }
@@ -125,7 +125,33 @@ class QuotaWindow:Window {
   Action<byte> tint=a=>{button.ApplyTemplate();var border=button.Template.FindName("Surface",button) as Border;if(border!=null){var brush=border.Background as SolidColorBrush;if(brush!=null&&brush.IsFrozen){brush=brush.Clone();border.Background=brush;}if(brush!=null)brush.BeginAnimation(SolidColorBrush.ColorProperty,new ColorAnimation(Color.FromArgb(a,255,255,255),TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?120:0)));}};
   button.MouseEnter+=(s,e)=>tint(170);button.MouseLeave+=(s,e)=>{tint(0);zoom(1,180);};button.PreviewMouseLeftButtonDown+=(s,e)=>{tint(230);zoom(.96,80);};button.PreviewMouseLeftButtonUp+=(s,e)=>zoom(1,180);
  }
- void ToggleCompact(){BeginAnimation(HeightProperty,null);if(settingsPopup!=null)settingsPopup.IsOpen=false;double oldHeight=ActualHeight;preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();double target=ActualHeight;if(!SystemParameters.ClientAreaAnimation||oldHeight<=0)return;SizeToContent=SizeToContent.Manual;Height=target;var a=new DoubleAnimation(oldHeight,target,TimeSpan.FromMilliseconds(preferences.Compact?240:320)){EasingFunction=new QuinticEase{EasingMode=EasingMode.EaseOut}};a.Completed+=(s,e)=>{BeginAnimation(HeightProperty,null);Height=Double.NaN;SizeToContent=SizeToContent.Height;};BeginAnimation(HeightProperty,a);if(!preferences.Compact){body.Opacity=0;Animate(body,OpacityProperty,1,220);var shift=new TranslateTransform(0,-4);body.RenderTransform=shift;shift.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(0,TimeSpan.FromMilliseconds(280)){EasingFunction=new QuinticEase{EasingMode=EasingMode.EaseOut}});}}
+ void ToggleCompact(){
+  if(settingsPopup!=null)settingsPopup.IsOpen=false;
+  int version;
+  double oldCardHeight=shell.ActualHeight,oldWindowHeight=ActualHeight;
+  shell.BeginAnimation(HeightProperty,null);BeginAnimation(HeightProperty,null);
+  root.UpdateLayout();var dpi=VisualTreeHelper.GetDpi(root);
+  var snapshot=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(root.ActualWidth*dpi.DpiScaleX)),Math.Max(1,(int)Math.Ceiling(root.ActualHeight*dpi.DpiScaleY)),dpi.PixelsPerInchX,dpi.PixelsPerInchY,PixelFormats.Pbgra32);snapshot.Render(root);snapshot.Freeze();
+  double oldContentHeight=root.ActualHeight;
+  preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();version=++motionVersion;
+  double targetCardHeight=shell.ActualHeight,targetWindowHeight=ActualHeight,newContentHeight=root.ActualHeight;
+  if(!SystemParameters.ClientAreaAnimation||oldCardHeight<=0)return;
+  // Animate the card in one fixed transparent HWND. No per-frame native resize.
+  SizeToContent=SizeToContent.Manual;Height=Math.Max(oldWindowHeight,targetWindowHeight);shell.VerticalAlignment=VerticalAlignment.Top;shell.Height=targetCardHeight;
+  root.Height=Math.Max(oldContentHeight,newContentHeight);root.VerticalAlignment=VerticalAlignment.Top;
+  var outgoing=new Image{Source=snapshot,Width=root.ActualWidth,Height=oldContentHeight,Stretch=Stretch.Fill,VerticalAlignment=VerticalAlignment.Top,IsHitTestVisible=false};root.Children.Add(outgoing);
+  var incoming=(UIElement)root.Children[0];incoming.Opacity=0;
+  var clip=new RectangleGeometry();root.Clip=clip;
+  shell.SizeChanged+=(s,e)=>clip.Rect=new Rect(0,0,Math.Max(0,shell.ActualWidth-38),Math.Max(0,shell.ActualHeight-26));
+  clip.Rect=new Rect(0,0,Math.Max(0,shell.ActualWidth-38),Math.Max(0,oldCardHeight-26));
+  int duration=preferences.Compact?300:360;
+  var morph=new DoubleAnimation(oldCardHeight,targetCardHeight,TimeSpan.FromMilliseconds(duration)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseInOut}};
+  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;root.Height=Double.NaN;root.Clip=null;shell.BeginAnimation(HeightProperty,null);shell.Height=Double.NaN;Height=Double.NaN;SizeToContent=SizeToContent.Height;};
+  outgoing.BeginAnimation(OpacityProperty,new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(150)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
+  incoming.BeginAnimation(OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(220)){BeginTime=TimeSpan.FromMilliseconds(50),EasingFunction=new CubicEase{EasingMode=EasingMode.EaseInOut}});
+  shell.BeginAnimation(HeightProperty,morph);
+ }
+ void StopRefreshSpin(){double angle=refreshRotation.Angle;refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=angle;double finish=(Math.Floor(angle/360)+1)*360;var settle=new DoubleAnimation(angle,finish,TimeSpan.FromMilliseconds(Math.Max(160,(finish-angle)/360*900))){EasingFunction=new QuadraticEase{EasingMode=EasingMode.EaseOut}};settle.Completed+=(s,e)=>{refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=0;};refreshRotation.BeginAnimation(RotateTransform.AngleProperty,settle);}
  void Menu(Button anchor) {
   if(settingsPopup!=null&&settingsPopup.IsOpen){CloseSettings();return;}
   var content=new StackPanel();var title=new Grid();title.ColumnDefinitions.Add(new ColumnDefinition());title.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});title.Children.Add(Text("透明度",13,"#26313B",FontWeights.SemiBold));var close=IconButton("关闭设置","M 3,3 L 11,11 M 11,3 L 3,11",CloseSettings);Grid.SetColumn(close,1);title.Children.Add(close);content.Children.Add(title);
@@ -144,15 +170,15 @@ class QuotaWindow:Window {
  void CloseSettings(){if(settingsPopup==null||!settingsPopup.IsOpen)return;var popup=settingsPopup;var panel=popup.Child;var a=new DoubleAnimation(0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?140:0));a.Completed+=(s,e)=>popup.IsOpen=false;panel.BeginAnimation(OpacityProperty,a);if(!preview)preferences.Save();}
  void UpdateGlass(){if(shell!=null)shell.Background=glassAvailable?new SolidColorBrush(Color.FromArgb((byte)(255*(1-Math.Max(5,Math.Min(65,preferences.Transparency))/100)),255,255,255)):Brushes.White;}
  void Build() {
-  if(settingsPopup!=null)settingsPopup.IsOpen=false;countdownLabels.Clear();var area=SystemParameters.WorkArea;Width=304;cornerRadius=preferences.Compact?34:28;
+  ++motionVersion;if(settingsPopup!=null)settingsPopup.IsOpen=false;countdownLabels.Clear();var area=SystemParameters.WorkArea;Width=304;cornerRadius=preferences.Compact?34:28;
   shell=new Border{CornerRadius=new CornerRadius(cornerRadius),BorderBrush=new SolidColorBrush(Color.FromArgb(210,255,255,255)),BorderThickness=new Thickness(1),Padding=new Thickness(18,12,18,12)};
   UpdateGlass();
-  root=new Grid{ClipToBounds=true};body=new StackPanel();root.Children.Add(body);shell.Child=root;shell.Margin=new Thickness(12);shell.Effect=new System.Windows.Media.Effects.DropShadowEffect{Color=Color.FromRgb(28,43,58),BlurRadius=18,ShadowDepth=4,Direction=270,Opacity=.14};Content=shell;
+  root=new Grid{ClipToBounds=true};body=new StackPanel();root.Children.Add(body);shell.Child=root;shell.Margin=new Thickness(12);var host=new Grid();var shadow=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(16,18,16,6),Background=new SolidColorBrush(Color.FromArgb(24,28,43,58)),VerticalAlignment=VerticalAlignment.Top,Effect=new System.Windows.Media.Effects.BlurEffect{Radius=12},IsHitTestVisible=false};shadow.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});host.Children.Add(shadow);host.Children.Add(shell);Content=host;
   if(preferences.Compact){BuildCompact();UpdateFooter();return;}
   var header=new Grid{Height=41,Margin=new Thickness(0,0,0,8)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
   header.Children.Add(Text("codex",14,"#26313B",FontWeights.SemiBold));
   var actions=new StackPanel{Orientation=Orientation.Horizontal};Grid.SetColumn(actions,1);header.Children.Add(actions);
-  actions.Children.Add(IconButton("刷新额度","M 15.5,6 A 6,6 0 1 0 16,12 M 15.5,2.5 L 15.5,6 L 12,6",Refresh));
+  actions.Children.Add(IconButton("刷新额度","M 16,7 A 6.5,6.5 0 0 0 4,7 M 16,3 L 16,7 L 12,7 M 4,13 A 6.5,6.5 0 0 0 16,13 M 4,17 L 4,13 L 8,13",Refresh));
   Button more=null;more=IconButton("设置","M 4,7 L 16,7 M 4,13 L 16,13 M 8,5 L 8,9 M 13,11 L 13,15",()=>Menu(more));actions.Children.Add(more);toggleButton=IconButton("收起","M 6,12 L 10,8 L 14,12",ToggleCompact);actions.Children.Add(toggleButton);body.Children.Add(header);var outer=body;body=new StackPanel();outer.Children.Add(body);
   if(quotas.Count==0)body.Children.Add(Text(busy?"正在查询额度…":error??"等待额度数据",12,"#75818C"));
   for(int i=0;i<quotas.Count;i++) {
@@ -188,10 +214,10 @@ class QuotaWindow:Window {
  }
  void UpdateCountdown(){foreach(var pair in countdownLabels)pair.Item2.Text=QuotaText.Reset(pair.Item1.Reset,DateTimeOffset.UtcNow);UpdateFooter();}
  async void Refresh() {
-  if(busy||closed||preview)return;busy=true;if(refreshRotation!=null&&SystemParameters.ClientAreaAnimation)refreshRotation.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(1000)){RepeatBehavior=RepeatBehavior.Forever});UpdateFooter();
+  if(busy||closed||preview)return;busy=true;if(refreshRotation!=null&&SystemParameters.ClientAreaAnimation)refreshRotation.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(900)){RepeatBehavior=RepeatBehavior.Forever});UpdateFooter();
   try {var data=await Task.Run(()=>QuotaClient.Read());if(closed)return;quotas=data;lastUpdate=DateTime.Now;error=null;Build();}
   catch(Exception ex){if(!closed){error=ex.Message;Build();}}
-  finally {busy=false;if(refreshRotation!=null)refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);if(!closed)UpdateFooter();}
+  finally {busy=false;if(refreshRotation!=null&&SystemParameters.ClientAreaAnimation)StopRefreshSpin();if(!closed)UpdateFooter();}
  }
  void UpdateVisibility() {
   if(closed||preview)return;IntPtr current=Native.GetForegroundWindow();bool codex=Native.IsCodex(current);
@@ -206,8 +232,8 @@ class QuotaWindow:Window {
  static T FindVisual<T>(DependencyObject parent) where T:DependencyObject {for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++){var child=VisualTreeHelper.GetChild(parent,i);if(child is T)return (T)child;var found=FindVisual<T>(child);if(found!=null)return found;}return null;}
  static void CheckHover(DependencyObject parent){var button=parent as Button;if(button!=null){button.ApplyTemplate();button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseEnterEvent});button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseLeaveEvent});}for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++)CheckHover(VisualTreeHelper.GetChild(parent,i));}
  void CheckTransparentCorners(){var bitmap=new RenderTargetBitmap((int)Math.Ceiling(ActualWidth),(int)Math.Ceiling(ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(this);int stride=bitmap.PixelWidth*4;var pixels=new byte[stride*bitmap.PixelHeight];bitmap.CopyPixels(pixels,stride,0);if(pixels[3]>20||pixels[stride-1]>20||pixels[(bitmap.PixelHeight-1)*stride+3]>20||pixels[pixels.Length-1]>20)throw new Exception("Opaque pixels outside rounded card");if(pixels[(bitmap.PixelHeight/2)*stride+(bitmap.PixelWidth/2)*4+3]<80)throw new Exception("Missing card surface");}
- static void PumpAnimation(){var frame=new DispatcherFrame();var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(380)};timer.Tick+=(s,e)=>{timer.Stop();frame.Continue=false;};timer.Start();Dispatcher.PushFrame(frame);}
- public void CheckUi(){UpdateLayout();CheckHover(this);CheckTransparentCorners();Point expandedButton=toggleButton.TranslatePoint(new Point(14,14),this);if(shell.ActualWidth!=280||shell.ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(shell.ActualWidth!=280||shell.ActualHeight>75)throw new Exception("Compact layout bounds");CheckTransparentCorners();Point compactButton=toggleButton.TranslatePoint(new Point(14,14),this);if(Math.Abs(expandedButton.X-compactButton.X)>.5||Math.Abs(expandedButton.Y-compactButton.Y)>.5)throw new Exception("Toggle anchor moved");ToggleCompact();PumpAnimation();if(preferences.Compact||Math.Abs(toggleButton.TranslatePoint(new Point(14,14),this).Y-expandedButton.Y)>.5)throw new Exception("Expand animation anchor");ToggleCompact();PumpAnimation();if(!preferences.Compact||Double.IsNaN(ActualHeight))throw new Exception("Collapse animation");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
+ static void PumpAnimation(int milliseconds=450){var frame=new DispatcherFrame();var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(milliseconds)};timer.Tick+=(s,e)=>{timer.Stop();frame.Continue=false;};timer.Start();Dispatcher.PushFrame(frame);}
+ public void CheckUi(){UpdateLayout();CheckHover(this);CheckTransparentCorners();Point expandedButton=toggleButton.TranslatePoint(new Point(14,14),this);if(shell.ActualWidth!=280||shell.ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(shell.ActualWidth!=280||shell.ActualHeight>75)throw new Exception("Compact layout bounds");CheckTransparentCorners();Point compactButton=toggleButton.TranslatePoint(new Point(14,14),this);if(Math.Abs(expandedButton.X-compactButton.X)>.5||Math.Abs(expandedButton.Y-compactButton.Y)>.5)throw new Exception("Toggle anchor moved");ToggleCompact();PumpAnimation();if(preferences.Compact||Math.Abs(toggleButton.TranslatePoint(new Point(14,14),this).Y-expandedButton.Y)>.5)throw new Exception("Expand animation anchor");ToggleCompact();PumpAnimation();if(!preferences.Compact||Double.IsNaN(ActualHeight))throw new Exception("Collapse animation");ToggleCompact();double fixedHeight=ActualHeight;PumpAnimation(90);if(Math.Abs(ActualHeight-fixedHeight)>.5)throw new Exception("Native window resized during morph");ToggleCompact();PumpAnimation();if(!preferences.Compact)throw new Exception("Interrupted transition state");preferences.Compact=false;Build();UpdateLayout();refreshRotation.BeginAnimation(RotateTransform.AngleProperty,new DoubleAnimation(0,360,TimeSpan.FromMilliseconds(900)){RepeatBehavior=RepeatBehavior.Forever});PumpAnimation(120);if(refreshRotation.Angle<=0)throw new Exception("Refresh rotation did not advance");StopRefreshSpin();PumpAnimation(1100);if(Math.Abs(refreshRotation.Angle)>.1)throw new Exception("Refresh rotation did not settle");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
 }
 
 class Program {
