@@ -38,21 +38,6 @@ static class QuotaText {
 }
 
 static class Native {
- [DllImport("gdi32.dll")] static extern IntPtr CreateRoundRectRgn(int left,int top,int right,int bottom,int width,int height);
- [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr region);
- [DllImport("user32.dll")] static extern int SetWindowRgn(IntPtr hwnd,IntPtr region,bool redraw);
- [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out WindowRect rect);
- [DllImport("user32.dll")] static extern int GetWindowRgn(IntPtr hwnd,IntPtr region);
- [DllImport("gdi32.dll")] static extern bool PtInRegion(IntPtr region,int x,int y);
- [StructLayout(LayoutKind.Sequential)] struct WindowRect {public int Left,Top,Right,Bottom;}
- public static void RoundWindow(IntPtr hwnd,double width,double height,double radius,double scale) {
-  if(hwnd==IntPtr.Zero||width<=0||height<=0)return;
-  WindowRect rect;if(!GetWindowRect(hwnd,out rect))return;
-  var region=CreateRoundRectRgn(0,0,rect.Right-rect.Left,rect.Bottom-rect.Top,(int)Math.Round(radius*2*scale),(int)Math.Round(radius*2*scale));
-  if(region!=IntPtr.Zero&&SetWindowRgn(hwnd,region,true)==0)DeleteObject(region);
- }
- public static bool HasClippedCorners(IntPtr hwnd){var region=CreateRoundRectRgn(0,0,1,1,0,0);try{WindowRect rect;return GetWindowRect(hwnd,out rect)&&GetWindowRgn(hwnd,region)>0&&!PtInRegion(region,0,0)&&!PtInRegion(region,rect.Right-rect.Left-1,0)&&PtInRegion(region,(rect.Right-rect.Left)/2,(rect.Bottom-rect.Top)/2);}finally{DeleteObject(region);}}
- public static void RemoveSystemBorder(IntPtr hwnd){try{int none=-2;DwmSetWindowAttribute(hwnd,34,ref none,4);int square=1;DwmSetWindowAttribute(hwnd,33,ref square,4);}catch{}}
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
@@ -60,13 +45,6 @@ static class Native {
  delegate bool EnumWindow(IntPtr hwnd,IntPtr param);
  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int length);
  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
- [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h,int attr,ref int value,int size);
- [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h,int attr,out int value,int size);
- [DllImport("dwmapi.dll")] static extern int DwmExtendFrameIntoClientArea(IntPtr h,ref Margins m);
- [DllImport("user32.dll")] static extern int SetWindowCompositionAttribute(IntPtr h,ref Composition data);
- [StructLayout(LayoutKind.Sequential)] struct Margins {public int Left,Right,Top,Bottom;}
- [StructLayout(LayoutKind.Sequential)] struct Accent {public int State,Flags,Color,Animation;}
- [StructLayout(LayoutKind.Sequential)] struct Composition {public int Attribute;public IntPtr Data;public int Size;}
  public static uint Pid(IntPtr h){uint id;GetWindowThreadProcessId(h,out id);return id;}
  public static bool IsCodexProcess(string name,string path) {
   if(name.Equals("Codex",StringComparison.OrdinalIgnoreCase))return true;
@@ -75,21 +53,6 @@ static class Native {
  public static bool IsCodex(IntPtr h) {
   if(h==IntPtr.Zero||!IsWindowVisible(h))return false;
   try {using(var p=Process.GetProcessById((int)Pid(h))){string name=p.ProcessName;if(name.Equals("Codex",StringComparison.OrdinalIgnoreCase))return true;if(!name.Equals("ChatGPT",StringComparison.OrdinalIgnoreCase))return false;return IsCodexProcess(name,p.MainModule.FileName);}}catch{return false;}
- }
- public static double MatchCorners(IntPtr own,IntPtr codex) {
-  int preference=2;
-  try {int source;if(DwmGetWindowAttribute(codex,33,out source,4)==0&&source!=0)preference=source;DwmSetWindowAttribute(own,33,ref preference,4);}catch{}
-  return preference==1?0:preference==3?4:8;
- }
- public static bool Glass(IntPtr hwnd) {
-  try {
-   var margins=new Margins{Left=-1,Right=-1,Top=-1,Bottom=-1};DwmExtendFrameIntoClientArea(hwnd,ref margins);
-   // Desktop Acrylic is native on Windows 11. Older systems use the compositor's Acrylic policy.
-   int backdrop=3;if(DwmSetWindowAttribute(hwnd,38,ref backdrop,4)==0)return true;
-   var accent=new Accent{State=4,Flags=2,Color=unchecked((int)0xB8FFFFFF)};
-   IntPtr ptr=Marshal.AllocHGlobal(Marshal.SizeOf(accent));
-   try {Marshal.StructureToPtr(accent,ptr,false);var data=new Composition{Attribute=19,Data=ptr,Size=Marshal.SizeOf(accent)};return SetWindowCompositionAttribute(hwnd,ref data)!=0;}finally{Marshal.FreeHGlobal(ptr);}
-  }catch{return false;}
  }
  public static string Diagnostic() {
   var list=new List<string>();EnumWindows((h,p)=>{if(IsCodex(h)){var title=new System.Text.StringBuilder(256);GetWindowText(h,title,title.Capacity);list.Add("Codex window: pid="+Pid(h)+" title="+title);}return true;},IntPtr.Zero);
@@ -115,14 +78,13 @@ class QuotaWindow:Window {
  IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;
  public QuotaWindow(bool isPreview,bool compactPreview) {
   preview=isPreview;preferences=preview?new Preferences{Compact=compactPreview}:Preferences.Load();
-  Title="Codex Quota Glass";Width=280;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;ShowActivated=false;Topmost=true;
-  AllowsTransparency=false;Background=Brushes.Transparent;UseLayoutRounding=true;SnapsToDevicePixels=true;
-  TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);TextOptions.SetTextRenderingMode(this,TextRenderingMode.ClearType);
+  Title="Codex Quota Glass";Width=304;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=isPreview;ShowActivated=false;Topmost=true;
+  AllowsTransparency=true;Background=Brushes.Transparent;UseLayoutRounding=true;SnapsToDevicePixels=true;
+  TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);TextOptions.SetTextRenderingMode(this,TextRenderingMode.Grayscale);
   FontFamily=new FontFamily("Segoe UI, Microsoft YaHei UI");
-  SizeChanged+=(s,e)=>QueueRoundedRegion();
+
   var area=SystemParameters.WorkArea;Left=preferences.X>=area.Left&&preferences.X<area.Right-100?preferences.X:area.Right-Width-24;Top=preferences.Y>=area.Top&&preferences.Y<area.Bottom-70?preferences.Y:area.Top+70;
-  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;var source=HwndSource.FromHwnd(hwnd);source.CompositionTarget.BackgroundColor=Colors.Transparent;glassAvailable=Native.Glass(hwnd);Native.RemoveSystemBorder(hwnd);source.AddHook((IntPtr h,int message,IntPtr w,IntPtr l,ref bool handled)=>{if(message==0x0047||message==0x02E0)QueueRoundedRegion();return IntPtr.Zero;});Build();QueueRoundedRegion();};
-  ContentRendered+=(s,e)=>QueueRoundedRegion();
+  SourceInitialized+=(s,e)=>{hwnd=new WindowInteropHelper(this).Handle;glassAvailable=true;Build();};
   MouseLeftButtonDown+=(s,e)=>{if(e.Handled)return;if(e.ClickCount==2){ToggleCompact();return;}try{DragMove();preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}catch{} };
   LocationChanged+=(s,e)=>{if(!preview&&!closed){preferences.X=Left;preferences.Y=Top;if(!preview)preferences.Save();}};
   Closed+=(s,e)=>{closed=true;if(settingsPopup!=null)settingsPopup.IsOpen=false;shutdown.Cancel();foreground.Stop();refresh.Stop();countdown.Stop();if(tray!=null)tray.Dispose();shutdown.Dispose();Application.Current.Shutdown();};
@@ -156,10 +118,7 @@ class QuotaWindow:Window {
   Action<byte> tint=a=>{button.ApplyTemplate();var border=button.Template.FindName("Surface",button) as Border;if(border!=null){var brush=border.Background as SolidColorBrush;if(brush!=null&&brush.IsFrozen){brush=brush.Clone();border.Background=brush;}if(brush!=null)brush.BeginAnimation(SolidColorBrush.ColorProperty,new ColorAnimation(Color.FromArgb(a,255,255,255),TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?120:0)));}};
   button.MouseEnter+=(s,e)=>tint(170);button.MouseLeave+=(s,e)=>{tint(0);zoom(1,180);};button.PreviewMouseLeftButtonDown+=(s,e)=>{tint(230);zoom(.96,80);};button.PreviewMouseLeftButtonUp+=(s,e)=>zoom(1,180);
  }
- bool roundPending;double clippedWidth,clippedHeight,clippedScale,clippedRadius;
- void QueueRoundedRegion(){if(roundPending||closed)return;roundPending=true;Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle,new Action(()=>{roundPending=false;if(!closed)ApplyRoundedRegion();}));}
- void ApplyRoundedRegion(){var source=PresentationSource.FromVisual(this);double scale=source==null?1:source.CompositionTarget.TransformToDevice.M11;if(clippedWidth==ActualWidth&&clippedHeight==ActualHeight&&clippedScale==scale&&clippedRadius==cornerRadius&&Native.HasClippedCorners(hwnd))return;Native.RoundWindow(hwnd,ActualWidth,ActualHeight,cornerRadius,scale);clippedWidth=ActualWidth;clippedHeight=ActualHeight;clippedScale=scale;clippedRadius=cornerRadius;}
- void ToggleCompact(){BeginAnimation(HeightProperty,null);if(settingsPopup!=null)settingsPopup.IsOpen=false;double oldHeight=ActualHeight;preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();double target=ActualHeight;if(!SystemParameters.ClientAreaAnimation||oldHeight<=0)return;SizeToContent=SizeToContent.Manual;Height=target;var a=new DoubleAnimation(oldHeight,target,TimeSpan.FromMilliseconds(220)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}};a.Completed+=(s,e)=>{BeginAnimation(HeightProperty,null);Height=Double.NaN;SizeToContent=SizeToContent.Height;ApplyRoundedRegion();};BeginAnimation(HeightProperty,a);}
+ void ToggleCompact(){BeginAnimation(HeightProperty,null);if(settingsPopup!=null)settingsPopup.IsOpen=false;double oldHeight=ActualHeight;preferences.Compact=!preferences.Compact;if(!preview)preferences.Save();Build();UpdateLayout();double target=ActualHeight;if(!SystemParameters.ClientAreaAnimation||oldHeight<=0)return;SizeToContent=SizeToContent.Manual;Height=target;var a=new DoubleAnimation(oldHeight,target,TimeSpan.FromMilliseconds(220)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}};a.Completed+=(s,e)=>{BeginAnimation(HeightProperty,null);Height=Double.NaN;SizeToContent=SizeToContent.Height;};BeginAnimation(HeightProperty,a);}
  void Menu(Button anchor) {
   if(settingsPopup!=null&&settingsPopup.IsOpen){CloseSettings();return;}
   var content=new StackPanel();var title=new Grid();title.ColumnDefinitions.Add(new ColumnDefinition());title.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});title.Children.Add(Text("透明度",13,"#26313B",FontWeights.SemiBold));var close=IconButton("关闭设置","M 3,3 L 11,11 M 11,3 L 3,11",CloseSettings);Grid.SetColumn(close,1);title.Children.Add(close);content.Children.Add(title);
@@ -173,12 +132,12 @@ class QuotaWindow:Window {
   panel.Opacity=0;var shift=new TranslateTransform(0,-6);panel.RenderTransform=shift;Animate(panel,OpacityProperty,1,180);shift.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?180:0)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
  }
  void CloseSettings(){if(settingsPopup==null||!settingsPopup.IsOpen)return;var popup=settingsPopup;var panel=popup.Child;var a=new DoubleAnimation(0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?140:0));a.Completed+=(s,e)=>popup.IsOpen=false;panel.BeginAnimation(OpacityProperty,a);if(!preview)preferences.Save();}
- void UpdateGlass(){if(shell!=null)shell.Background=preview?new SolidColorBrush(Color.FromRgb(239,244,246)):glassAvailable?new SolidColorBrush(Color.FromArgb((byte)(255*(1-Math.Max(5,Math.Min(65,preferences.Transparency))/100)),255,255,255)):Brushes.White;}
+ void UpdateGlass(){if(shell!=null)shell.Background=glassAvailable?new SolidColorBrush(Color.FromArgb((byte)(255*(1-Math.Max(5,Math.Min(65,preferences.Transparency))/100)),255,255,255)):Brushes.White;}
  void Build() {
-  if(settingsPopup!=null)settingsPopup.IsOpen=false;countdownLabels.Clear();var area=SystemParameters.WorkArea;Width=preferences.Compact?268:280;cornerRadius=preferences.Compact?34:28;
+  if(settingsPopup!=null)settingsPopup.IsOpen=false;countdownLabels.Clear();var area=SystemParameters.WorkArea;Width=preferences.Compact?292:304;cornerRadius=preferences.Compact?34:28;
   shell=new Border{CornerRadius=new CornerRadius(cornerRadius),BorderBrush=new SolidColorBrush(Color.FromArgb(210,255,255,255)),BorderThickness=new Thickness(1),Padding=preferences.Compact?new Thickness(18,12,18,12):new Thickness(18,15,18,14)};
   UpdateGlass();
-  root=new Grid();body=new StackPanel();root.Children.Add(body);shell.Child=root;Content=shell;
+  root=new Grid();body=new StackPanel();root.Children.Add(body);shell.Child=root;shell.Margin=new Thickness(12);shell.Effect=new System.Windows.Media.Effects.DropShadowEffect{Color=Color.FromRgb(28,43,58),BlurRadius=18,ShadowDepth=4,Direction=270,Opacity=.14};Content=shell;
   if(preferences.Compact){BuildCompact();UpdateFooter();return;}
   var header=new Grid{Margin=new Thickness(0,0,0,10)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
   header.Children.Add(Text("codex",14,"#26313B",FontWeights.SemiBold));
@@ -227,7 +186,7 @@ class QuotaWindow:Window {
  void UpdateVisibility() {
   if(closed||preview)return;IntPtr current=Native.GetForegroundWindow();bool codex=Native.IsCodex(current);
   bool own=current!=IntPtr.Zero&&Native.Pid(current)==(uint)Process.GetCurrentProcess().Id;
-  if(codex&&lastCodex!=current){lastCodex=current;if(hwnd!=IntPtr.Zero){ApplyRoundedRegion();}}
+  if(codex&&lastCodex!=current){lastCodex=current;if(hwnd!=IntPtr.Zero){}}
   bool show=!preferences.ForegroundOnly||codex||(own&&IsVisible&&lastCodex!=IntPtr.Zero);
   if(show&&!IsVisible)Show();else if(!show&&IsVisible){if(settingsPopup!=null)settingsPopup.IsOpen=false;Hide();}
  }
@@ -236,7 +195,8 @@ class QuotaWindow:Window {
  public void ExportSettings(string path){var anchor=FindVisual<Button>(this);Menu(anchor);var panel=(FrameworkElement)settingsPopup.Child;panel.BeginAnimation(OpacityProperty,null);panel.Opacity=1;panel.RenderTransform=Transform.Identity;panel.UpdateLayout();var image=new RenderTargetBitmap((int)(panel.ActualWidth*3),(int)(panel.ActualHeight*3),288,288,PixelFormats.Pbgra32);image.Render(panel);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using(var stream=File.Create(path))encoder.Save(stream);settingsPopup.IsOpen=false;}
  static T FindVisual<T>(DependencyObject parent) where T:DependencyObject {for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++){var child=VisualTreeHelper.GetChild(parent,i);if(child is T)return (T)child;var found=FindVisual<T>(child);if(found!=null)return found;}return null;}
  static void CheckHover(DependencyObject parent){var button=parent as Button;if(button!=null){button.ApplyTemplate();button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseEnterEvent});button.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.MouseLeaveEvent});}for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++)CheckHover(VisualTreeHelper.GetChild(parent,i));}
- public void CheckUi(){UpdateLayout();CheckHover(this);ApplyRoundedRegion();if(!Native.HasClippedCorners(hwnd))throw new Exception("Expanded native corner clipping");if(ActualWidth!=280||ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(ActualWidth!=268||ActualHeight>75)throw new Exception("Compact layout bounds");ApplyRoundedRegion();if(!Native.HasClippedCorners(hwnd))throw new Exception("Compact native corner clipping");Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
+ void CheckTransparentCorners(){var bitmap=new RenderTargetBitmap((int)Math.Ceiling(ActualWidth),(int)Math.Ceiling(ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(this);int stride=bitmap.PixelWidth*4;var pixels=new byte[stride*bitmap.PixelHeight];bitmap.CopyPixels(pixels,stride,0);if(pixels[3]>20||pixels[stride-1]>20||pixels[(bitmap.PixelHeight-1)*stride+3]>20||pixels[pixels.Length-1]>20)throw new Exception("Opaque pixels outside rounded card");if(pixels[(bitmap.PixelHeight/2)*stride+(bitmap.PixelWidth/2)*4+3]<80)throw new Exception("Missing card surface");}
+ public void CheckUi(){UpdateLayout();CheckHover(this);CheckTransparentCorners();if(shell.ActualWidth!=280||shell.ActualHeight>250)throw new Exception("Expanded layout bounds");Menu(FindVisual<Button>(this));var panel=(FrameworkElement)settingsPopup.Child;panel.UpdateLayout();CheckHover(panel);var slider=FindVisual<Slider>(panel);if(slider==null||FindVisual<Thumb>(slider)==null)throw new Exception("Slider template");slider.Value=65;if(preferences.Transparency!=65)throw new Exception("Slider binding");slider.Value=14;settingsPopup.IsOpen=false;preferences.Compact=true;Build();UpdateLayout();if(shell.ActualWidth!=268||shell.ActualHeight>75)throw new Exception("Compact layout bounds");CheckTransparentCorners();Console.WriteLine("PASS: UI layout, rounded button and slider templates, transparency binding");}
 }
 
 class Program {
@@ -244,10 +204,10 @@ class Program {
   if(args.Contains("--check")){try{foreach(var q in QuotaClient.Read())Console.WriteLine(q.Name+": "+q.Left+"% left; reset="+q.Reset);return 0;}catch(Exception ex){Console.WriteLine(ex.Message);return 1;}}
   if(args.Contains("--diagnose")){Console.WriteLine(Native.Diagnostic());return 0;}
   try{Native.SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{}
-  bool preview=args.Contains("--preview")||args.Contains("--ui-check");
+  bool preview=args.Contains("--preview")||args.Contains("--ui-check")||args.Contains("--visual-check");
   using(var mutex=new Mutex(false,preview?"Local\\CodexQuotaGlassPreview":"Local\\CodexQuotaGlass")){
    if(!mutex.WaitOne(0))return 0;
-   try{var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};var window=new QuotaWindow(preview,args.Contains("--compact"));window.Start();if(preview){window.Dispatcher.Invoke(()=>{},DispatcherPriority.Render);if(args.Contains("--ui-check"))window.CheckUi();else if(args.Contains("--settings"))window.ExportSettings(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"preview-settings.png"));else window.ExportPreview(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,args.Contains("--compact")?"preview-compact.png":"preview.png"));window.Close();}else app.Run();}finally{mutex.ReleaseMutex();}
+   try{var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};var window=new QuotaWindow(preview,args.Contains("--compact"));window.Start();if(preview&&!args.Contains("--visual-check")){window.Dispatcher.Invoke(()=>{},DispatcherPriority.Render);if(args.Contains("--ui-check"))window.CheckUi();else if(args.Contains("--settings"))window.ExportSettings(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"preview-settings.png"));else window.ExportPreview(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,args.Contains("--compact")?"preview-compact.png":"preview.png"));window.Close();}else app.Run();}finally{mutex.ReleaseMutex();}
   }return 0;
  }
 }

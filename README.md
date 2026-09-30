@@ -13,7 +13,7 @@ Windows 常驻 Codex 额度悬浮窗。默认仅在 Codex 桌面应用位于前�
 
 ## 运行与构建
 
-要求 Windows 10/11、.NET Framework 4.8，Codex 桌面应用或 CLI 已安装并通过 ChatGPT 登录。Windows 11 的原生 Desktop Acrylic 优先；旧系统尝试 compositor Acrylic，失败则使用白色背景。Windows 禁用透明效果或系统节能策略也可能影响玻璃效果。
+要求 Windows 10/11、.NET Framework 4.8，Codex 桌面应用或 CLI 已安装并通过 ChatGPT 登录。使用 WPF 逐像素透明窗口，固定白色半透明底色与柔和圆角阴影；当前不启用原生 Acrylic 背景模糊，避免系统合成层在自定义圆角外露出灰色底板。
 
 ```powershell
 .\build.ps1 -Test
@@ -60,6 +60,6 @@ Windows 常驻 Codex 额度悬浮窗。默认仅在 Codex 桌面应用位于前�
 - `--ui-check`：实际实例化按钮与滑杆模板，检查展开/精简尺寸和透明度绑定。
 - 动效：按钮悬停 120ms、按下缩至 96% / 80ms、松开 180ms；面板打开 180ms 淡入与 6 DIP 位移，关闭按钮淡出 140ms；收起/展开 220ms 高度过渡。关闭系统动画时跳过动效。
 
-这是独立社区工具，与 OpenAI 无隶属关系。当前未签名；各 Windows 版本、混合 DPI、多显示器和辅助功能需进一步验证。窗口圆角区域随 DPI 和大小更新。
+这是独立社区工具，与 OpenAI 无隶属关系。当前未签名；各 Windows 版本、混合 DPI、多显示器和辅助功能需进一步验证。圆角及阴影由 WPF 在透明窗口内绘制，外侧保留透明像素。
 
 MIT License。仓库不包含构建产物、个人设置或账户信息。
