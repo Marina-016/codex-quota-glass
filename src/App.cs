@@ -75,7 +75,7 @@ class QuotaWindow:Window {
  readonly DispatcherTimer countdown=new DispatcherTimer{Interval=TimeSpan.FromSeconds(15)};
  readonly CancellationTokenSource shutdown=new CancellationTokenSource();
  readonly List<Tuple<WindowQuota,TextBlock>> countdownLabels=new List<Tuple<WindowQuota,TextBlock>>();
- List<WindowQuota> quotas=new List<WindowQuota>();Border shell;StackPanel body;TextBlock footerStatus,footerMessage;Grid root;
+ List<WindowQuota> quotas=new List<WindowQuota>();Border shell,cardSurface,shadowSurface;StackPanel body;TextBlock footerStatus,footerMessage;Grid root;
  IntPtr hwnd,lastCodex;DateTime lastUpdate;bool busy,closed,glassAvailable;double cornerRadius=28;string error;System.Windows.Forms.NotifyIcon tray;Popup settingsPopup;Button toggleButton;RotateTransform refreshRotation=new RotateTransform(0);int motionVersion;
  public QuotaWindow(bool isPreview,bool compactPreview) {
   preview=isPreview;preferences=preview?new Preferences{Compact=compactPreview}:Preferences.Load();
@@ -141,15 +141,18 @@ class QuotaWindow:Window {
   root.Height=Math.Max(oldContentHeight,newContentHeight);root.VerticalAlignment=VerticalAlignment.Top;
   var outgoing=new Image{Source=snapshot,Width=root.ActualWidth,Height=oldContentHeight,Stretch=Stretch.Fill,VerticalAlignment=VerticalAlignment.Top,IsHitTestVisible=false};root.Children.Add(outgoing);
   var incoming=(UIElement)root.Children[0];incoming.Opacity=0;
-  var clip=new RectangleGeometry();root.Clip=clip;
-  shell.SizeChanged+=(s,e)=>clip.Rect=new Rect(0,0,Math.Max(0,shell.ActualWidth-38),Math.Max(0,shell.ActualHeight-26));
-  clip.Rect=new Rect(0,0,Math.Max(0,shell.ActualWidth-38),Math.Max(0,oldCardHeight-26));
-  int duration=preferences.Compact?300:360;
-  var morph=new DoubleAnimation(oldCardHeight,targetCardHeight,TimeSpan.FromMilliseconds(duration)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseInOut}};
-  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;root.Height=Double.NaN;root.Clip=null;shell.BeginAnimation(HeightProperty,null);shell.Height=Double.NaN;Height=Double.NaN;SizeToContent=SizeToContent.Height;};
-  outgoing.BeginAnimation(OpacityProperty,new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(150)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
-  incoming.BeginAnimation(OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(220)){BeginTime=TimeSpan.FromMilliseconds(50),EasingFunction=new CubicEase{EasingMode=EasingMode.EaseInOut}});
-  shell.BeginAnimation(HeightProperty,morph);
+  var clip=new RectangleGeometry(new Rect(0,0,244,Math.Max(0,oldCardHeight-26)));root.Clip=clip;
+  int duration=preferences.Compact?220:260;
+  double maximum=Math.Max(oldCardHeight,targetCardHeight);
+  cardSurface.Height=maximum;shadowSurface.Height=maximum;
+  var surfaceScale=new ScaleTransform(1,oldCardHeight/maximum);var shadowScale=new ScaleTransform(1,oldCardHeight/maximum);cardSurface.RenderTransform=surfaceScale;shadowSurface.RenderTransform=shadowScale;
+  var easing=new CubicEase{EasingMode=EasingMode.EaseOut};
+  var morph=new DoubleAnimation(oldCardHeight/maximum,targetCardHeight/maximum,TimeSpan.FromMilliseconds(duration)){EasingFunction=easing};
+  morph.Completed+=(s,e)=>{if(version!=motionVersion)return;root.Children.Remove(outgoing);incoming.BeginAnimation(OpacityProperty,null);incoming.Opacity=1;root.Height=Double.NaN;root.Clip=null;cardSurface.RenderTransform=Transform.Identity;shadowSurface.RenderTransform=Transform.Identity;cardSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shadowSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shell.Height=Double.NaN;Height=Double.NaN;SizeToContent=SizeToContent.Height;};
+  outgoing.BeginAnimation(OpacityProperty,new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(100)));
+  incoming.BeginAnimation(OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(160)){BeginTime=TimeSpan.FromMilliseconds(30)});
+  clip.BeginAnimation(RectangleGeometry.RectProperty,new RectAnimation(new Rect(0,0,244,Math.Max(0,targetCardHeight-26)),TimeSpan.FromMilliseconds(duration)){EasingFunction=easing});
+  shadowScale.BeginAnimation(ScaleTransform.ScaleYProperty,morph.Clone());surfaceScale.BeginAnimation(ScaleTransform.ScaleYProperty,morph);
  }
  void StopRefreshSpin(){double angle=refreshRotation.Angle;refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=angle;double finish=(Math.Floor(angle/360)+1)*360;var settle=new DoubleAnimation(angle,finish,TimeSpan.FromMilliseconds(Math.Max(160,(finish-angle)/360*900))){EasingFunction=new QuadraticEase{EasingMode=EasingMode.EaseOut}};settle.Completed+=(s,e)=>{refreshRotation.BeginAnimation(RotateTransform.AngleProperty,null);refreshRotation.Angle=0;};refreshRotation.BeginAnimation(RotateTransform.AngleProperty,settle);}
  void Menu(Button anchor) {
@@ -168,12 +171,15 @@ class QuotaWindow:Window {
   panel.Opacity=0;var shift=new TranslateTransform(0,-6);panel.RenderTransform=shift;Animate(panel,OpacityProperty,1,180);shift.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?180:0)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
  }
  void CloseSettings(){if(settingsPopup==null||!settingsPopup.IsOpen)return;var popup=settingsPopup;var panel=popup.Child;var a=new DoubleAnimation(0,TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation?140:0));a.Completed+=(s,e)=>popup.IsOpen=false;panel.BeginAnimation(OpacityProperty,a);if(!preview)preferences.Save();}
- void UpdateGlass(){if(shell!=null)shell.Background=glassAvailable?new SolidColorBrush(Color.FromArgb((byte)(255*(1-Math.Max(5,Math.Min(65,preferences.Transparency))/100)),255,255,255)):Brushes.White;}
+ void UpdateGlass(){if(cardSurface!=null)cardSurface.Background=glassAvailable?new SolidColorBrush(Color.FromArgb((byte)(255*(1-Math.Max(5,Math.Min(65,preferences.Transparency))/100)),255,255,255)):Brushes.White;}
  void Build() {
   ++motionVersion;if(settingsPopup!=null)settingsPopup.IsOpen=false;countdownLabels.Clear();var area=SystemParameters.WorkArea;Width=304;cornerRadius=preferences.Compact?34:28;
   shell=new Border{CornerRadius=new CornerRadius(cornerRadius),BorderBrush=new SolidColorBrush(Color.FromArgb(210,255,255,255)),BorderThickness=new Thickness(1),Padding=new Thickness(18,12,18,12)};
-  UpdateGlass();
-  root=new Grid{ClipToBounds=true};body=new StackPanel();root.Children.Add(body);shell.Child=root;shell.Margin=new Thickness(12);var host=new Grid();var shadow=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(16,18,16,6),Background=new SolidColorBrush(Color.FromArgb(24,28,43,58)),VerticalAlignment=VerticalAlignment.Top,Effect=new System.Windows.Media.Effects.BlurEffect{Radius=12},IsHitTestVisible=false};shadow.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});host.Children.Add(shadow);host.Children.Add(shell);Content=host;
+
+  root=new Grid{ClipToBounds=true};body=new StackPanel();root.Children.Add(body);shell.Child=root;shell.Margin=new Thickness(12);shell.Background=Brushes.Transparent;shell.BorderBrush=Brushes.Transparent;shell.VerticalAlignment=VerticalAlignment.Top;
+  var host=new Grid();cardSurface=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(12),BorderBrush=new SolidColorBrush(Color.FromArgb(210,255,255,255)),BorderThickness=new Thickness(1),VerticalAlignment=VerticalAlignment.Top,CacheMode=new BitmapCache()};
+  shadowSurface=new Border{CornerRadius=new CornerRadius(cornerRadius),Margin=new Thickness(16,18,16,6),Background=new SolidColorBrush(Color.FromArgb(24,28,43,58)),VerticalAlignment=VerticalAlignment.Top,Effect=new System.Windows.Media.Effects.BlurEffect{Radius=12},CacheMode=new BitmapCache(),IsHitTestVisible=false};
+  cardSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shadowSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});UpdateGlass();host.Children.Add(shadowSurface);host.Children.Add(cardSurface);host.Children.Add(shell);Content=host;
   if(preferences.Compact){BuildCompact();UpdateFooter();return;}
   var header=new Grid{Height=41,Margin=new Thickness(0,0,0,8)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
   header.Children.Add(Text("codex",14,"#26313B",FontWeights.SemiBold));
