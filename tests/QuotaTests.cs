@@ -18,6 +18,8 @@ class QuotaTests {
   Check(QuotaText.Message(10)=="快到上限，稍作休息"&&QuotaText.Message(10.1)=="留点余量，先做重点","10% boundary");
   Check(QuotaText.Message(30)=="留点余量，先做重点"&&QuotaText.Message(30.1)=="节奏不错，稳步推进","30% boundary");
   Check(QuotaText.Message(60)=="节奏不错，稳步推进"&&QuotaText.Message(60.1)=="余量充足，放心推进","60% boundary");
+  Check(QuotaText.ColorFor(10)=="#B85062"&&QuotaText.ColorFor(10.1)=="#AD762E","critical color boundary");
+  Check(QuotaText.ColorFor(30)=="#AD762E"&&QuotaText.ColorFor(30.1)=="#5879A5"&&QuotaText.ColorFor(60)=="#5879A5"&&QuotaText.ColorFor(60.1)=="#368B82","low and healthy color boundaries");
   var now=DateTimeOffset.FromUnixTimeSeconds(1800000000);
   Check(QuotaText.Reset(0,now)=="重置时间未知","unknown reset");
   Check(QuotaText.Reset(1799999999,now)=="等待额度刷新","expired data never assumes new balance");
