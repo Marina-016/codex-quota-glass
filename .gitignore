@@ -1,0 +1,10 @@
+outputs/
+work/
+settings.json
+*.exe
+*.pdb
+*.log
+auth.json
+.vs/
+bin/
+obj/
