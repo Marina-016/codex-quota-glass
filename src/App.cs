@@ -170,7 +170,7 @@ class QuotaWindow:Window {
   cardSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});shadowSurface.SetBinding(FrameworkElement.HeightProperty,new System.Windows.Data.Binding("ActualHeight"){Source=shell});UpdateGlass();host.Children.Add(shadowSurface);host.Children.Add(cardSurface);host.Children.Add(shell);Content=host;
 
   var header=new Grid{Height=41,Margin=new Thickness(0,0,0,8)};header.ColumnDefinitions.Add(new ColumnDefinition());header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-  header.Children.Add(Text("codex",14,"#26313B",FontWeights.SemiBold));
+  header.Children.Add(Text("codex",12,"#26313B",FontWeights.SemiBold));
   var actions=new StackPanel{Orientation=Orientation.Horizontal};Grid.SetColumn(actions,1);header.Children.Add(actions);
   actions.Children.Add(IconButton("刷新额度","M 16,7 A 6.5,6.5 0 0 0 4,7 M 16,3 L 16,7 L 12,7 M 4,13 A 6.5,6.5 0 0 0 16,13 M 4,17 L 4,13 L 8,13",Refresh));
   Button more=null;more=IconButton("设置","M 4,7 L 16,7 M 4,13 L 16,13 M 8,5 L 8,9 M 13,11 L 13,15",()=>Menu(more));actions.Children.Add(more);toggleButton=IconButton("收起","M 6,12 L 10,8 L 14,12",ToggleCompact);actions.Children.Add(toggleButton);body.Children.Add(header);var outer=body;body=new StackPanel();outer.Children.Add(body);
